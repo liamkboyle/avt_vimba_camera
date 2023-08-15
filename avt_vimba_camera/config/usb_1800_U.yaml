@@ -1,15 +1,26 @@
 /**:
   ros__parameters:
-    feature/AcquisitionFrameCount: 1
+    # feature/AcquisitionFrameCount: 1
     feature/AcquisitionMode: Continuous
-    feature/BalanceWhiteAuto: Continuous
-    feature/ExposureTime: 100000.0
+    # feature/BalanceWhiteAuto: Continuous
+    feature/ExposureAuto: 'Off'
+    # feature/ExposureAutoMin: 100.0
+    # feature/ExposureAutoMax: 99999.0
+    feature/ExposureTime: 50000.0
     feature/GainAuto: Continuous
-    feature/PixelFormat: Mono8
-    feature/TriggerActivation: RisingEdge
-    feature/TriggerMode: 'Off'
-    feature/TriggerSelector: AcquisitionStart
-    feature/TriggerSource: Software
-    feature/Width: 4024
-    feature/Height: 3036
-    feature/LineMode: Input
+    feature/PixelFormat: RGB8
+    feature/DeviceTemperatureSelector: Mainboard
+    # feature/TriggerActivation: RisingEdge
+    # feature/TriggerMode: 'Off'
+    # feature/TriggerSelector: AcquisitionStart
+    # feature/TriggerSource: Software
+    feature/Width: 1936
+    feature/Height: 1216
+    # feature/LineMode: Input
+    feature/BlackLevel: 0.0
+    feature/GainAuto: 'Off'
+    feature/Gain: 0.0
+    feature/Gamma: 1.0
+    feature/Hue: 0.0
+    feature/Saturation: 1.0
+    feature/BalanceRatio: 2.35498
