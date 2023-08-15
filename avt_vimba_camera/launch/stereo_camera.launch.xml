@@ -1,7 +1,8 @@
 <?xml version="1.0"?>
 <!-- Example launch file for stereo camera application -->
 <launch>
-  <group namespace="stereo">
+  <group>
+  <push_ros_namespace namespace="stereo"/>
     <node pkg="stereo_image_proc" name="disparity_node"  exec="disparity_node"/>
     <node pkg="stereo_image_proc" name="point_cloud_node" exec="point_cloud_node"/>
 
@@ -9,7 +10,7 @@
     <include file="$(find-pkg-share avt_vimba_camera)/launch/mono_camera.launch.xml">
       <arg name="name" value="left"/>
       <arg name="ip" value=""/>
-      <arg name="guid" value=""/>
+      <arg name="guid" value="DEV_1AB22C0347E6"/>
       <arg name="camera_info_url" value="file://$(find-pkg-share avt_vimba_camera)/calibrations/calibration_example.yaml"/>
     </include>
 
@@ -17,7 +18,7 @@
     <include file="$(find-pkg-share avt_vimba_camera)/launch/mono_camera.launch.xml">
       <arg name="name" value="right"/>
       <arg name="ip" value=""/>
-      <arg name="guid" value=""/>
+      <arg name="guid" value="DEV_1AB22C0347E7"/>
       <arg name="camera_info_url" value="file://$(find-pkg-share avt_vimba_camera)/calibrations/calibration_example.yaml"/>
     </include>
   </group>
