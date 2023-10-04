@@ -2,7 +2,7 @@
 <!-- Example launch file for stereo camera application -->
 <launch>
   <group>
-  <push_ros_namespace namespace="stereo"/>
+  <push_ros_namespace namespace="rgb_stereo"/>
     <node pkg="stereo_image_proc" name="disparity_node"  exec="disparity_node"/>
     <node pkg="stereo_image_proc" name="point_cloud_node" exec="point_cloud_node"/>
 
