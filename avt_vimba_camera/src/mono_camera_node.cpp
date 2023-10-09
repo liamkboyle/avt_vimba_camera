@@ -36,6 +36,15 @@
 #include <avt_vimba_camera_msgs/srv/load_settings.hpp>
 #include <avt_vimba_camera_msgs/srv/save_settings.hpp>
 
+#include <VimbaCPP/Include/VimbaCPP.h>
+
+#include <opencv2/core.hpp>
+#include <image_transport/image_transport.hpp>
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.hpp>
+
+#include <immintrin.h>
+
 using namespace std::placeholders;
 
 namespace avt_vimba_camera
@@ -71,6 +80,9 @@ void MonoCameraNode::loadParams()
   frame_id_ = this->declare_parameter("frame_id", "");
   use_measurement_time_ = this->declare_parameter("use_measurement_time", false);
   ptp_offset_ = this->declare_parameter("ptp_offset", 0);
+  start_imaging_ = this->declare_parameter("start_imaging", true);
+
+
 
   RCLCPP_INFO(this->get_logger(), "Parameters loaded");
 }
@@ -82,8 +94,165 @@ void MonoCameraNode::start()
 
   // Start camera
   cam_.start(ip_, guid_, frame_id_, camera_info_url_);
-  cam_.startImaging();
+
+  // Start imaging on camera Node start
+  if(start_imaging_)
+    cam_.startImaging();
 }
+
+
+
+bool simd_unpack12to16(uint16_t *out_ptr, uint8_t *in_ptr, size_t n){
+  
+
+    const __m256i bytegrouping =
+        _mm256_setr_epi8(4,5, 5,6,  7,8, 8,9,  10,11, 11,12,  13,14, 14,15, // low half uses last 12B
+                         0,1, 1,2,  3,4, 4,5,   6, 7,  7, 8,   9,10, 10,11); // high half uses first 12B
+    
+
+    // First Round
+    __m256i v = _mm256_loadu_si256((__m256i*)in_ptr);
+    v = _mm256_permutevar8x32_epi32(v, _mm256_set_epi32(6, 5, 4, 3, 2, 1, 0, 0));
+    
+    v = _mm256_shuffle_epi8(v, bytegrouping);
+
+
+    __m256i hi = _mm256_srli_epi16(v, 4);                              // [ 0 f e d | xxxx ]
+    __m256i lo  = _mm256_and_si256(v, _mm256_set1_epi32(0x00000FFF));
+
+    v = _mm256_blend_epi16(lo, hi, 0b10101010);
+    v = _mm256_slli_epi16(v, 4);
+
+    _mm256_storeu_si256((__m256i*)out_ptr, v);
+    out_ptr += 16;
+    in_ptr += (24 - 4);
+    n -= 24;
+
+
+
+    while(n){
+
+        __m256i v = _mm256_loadu_si256((__m256i*)in_ptr);
+        v = _mm256_shuffle_epi8(v, bytegrouping);
+
+
+        __m256i hi = _mm256_srli_epi16(v, 4);                              // [ 0 f e d | xxxx ]
+        __m256i lo  = _mm256_and_si256(v, _mm256_set1_epi32(0x00000FFF));
+
+        v = _mm256_blend_epi16(lo, hi, 0b10101010);
+        v = _mm256_slli_epi16(v, 4);
+
+        _mm256_storeu_si256((__m256i*)out_ptr, v);
+
+        out_ptr += 16;
+        in_ptr += 24;
+        n-= 24;
+    }
+
+    return true;
+
+}
+
+
+
+
+
+bool scale_and_save_frame(const FramePtr vimba_frame_ptr, sensor_msgs::msg::Image& image)
+{
+    VmbPixelFormatType pixel_format;
+    VmbUint32_t width, height, nSize;
+    VmbUint64_t ts;
+
+    vimba_frame_ptr->GetWidth(width);
+    vimba_frame_ptr->GetHeight(height);
+    vimba_frame_ptr->GetPixelFormat(pixel_format);
+    vimba_frame_ptr->GetImageSize(nSize);
+    vimba_frame_ptr->GetTimestamp(ts);
+    VmbUchar_t* buffer_ptr;
+    VmbErrorType err = vimba_frame_ptr->GetImage(buffer_ptr);
+    if(err != VmbErrorSuccess){
+      return false;
+    }
+
+
+    // std::cout << width << "x" << height << " ts:" << ts << " pxl_fmt:" << pixel_format << " n_size:" << nSize << std::endl;
+    cv::Mat orig_image;
+    cv::Mat resized_down;
+    cv_bridge::CvImage cv_img;
+
+
+    switch(pixel_format){
+
+
+      case VmbPixelFormatRgb8: 
+        orig_image = cv::Mat(height, width, CV_8UC3, buffer_ptr);
+        // cv::cvtColor(orig_image, orig_image, cv::COLOR_RGB2GRAY);
+        // cv_img.encoding = "mono8";
+        cv_img.encoding = "rgb8";
+
+        break;
+
+      case VmbPixelFormatBayerRG12p:
+        {
+          cv::Mat raw_img(height, width, CV_16UC1);
+
+          uint16_t *img_ptr = raw_img.ptr<uint16_t>();
+
+          simd_unpack12to16(img_ptr, buffer_ptr, nSize);
+
+
+          // for(uint64_t i = 0; i < nSize; i += 3){
+          //   uint16_t px1 = buffer_ptr[i] | ((buffer_ptr[i+1] & 0x0F) << 8);
+          //   uint16_t px2 = ((buffer_ptr[i+1] & 0xF) >> 4) | ((buffer_ptr[i+2]) << 4);
+
+          //   *img_ptr++ = px1 << 4;
+          //   *img_ptr++ = px2 << 4;
+          // }
+
+
+          //cv::cvtColor(raw_img, raw_img, cv::COLOR_BayerRG2BGR);
+          raw_img.convertTo(orig_image, CV_8U, 255.0 / 65535);
+        }
+
+
+        
+
+        cv_img.encoding = "mono8";
+        break;
+
+
+      default:
+        orig_image = cv::Mat(height, width, CV_8UC3, buffer_ptr);
+        cv_img.encoding = "rgb8";
+        break;
+    }
+
+
+    
+
+    cv::Size newSize(orig_image.cols / 8, orig_image.rows / 8);
+    cv::resize(orig_image, resized_down, newSize, cv::INTER_LINEAR);
+
+
+    // cv::imshow("resiresize_down);
+
+    // std::cout << cvImage << std::endl;
+
+    cv_img.image = resized_down;
+
+    cv_img.toImageMsg(image);
+
+  return true;
+}
+
+
+
+
+
+
+
+
+
 
 void MonoCameraNode::frameCallback(const FramePtr& vimba_frame_ptr)
 {
@@ -93,7 +262,10 @@ void MonoCameraNode::frameCallback(const FramePtr& vimba_frame_ptr)
   // if (camera_info_pub_.getNumSubscribers() > 0)
   {
     sensor_msgs::msg::Image img;
-    if (api_.frameToImage(vimba_frame_ptr, img))
+
+
+    if(scale_and_save_frame(vimba_frame_ptr, img))
+    // if (api_.frameToImage(vimba_frame_ptr, img))
     {
       sensor_msgs::msg::CameraInfo ci = cam_.getCameraInfo();
       // Note: getCameraInfo() doesn't fill in header frame_id or stamp

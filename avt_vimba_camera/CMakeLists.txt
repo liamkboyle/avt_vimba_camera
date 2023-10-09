@@ -6,10 +6,11 @@ if(NOT CMAKE_CXX_STANDARD)
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
+  add_compile_options(-Wall -Wextra -Wpedantic -march=native -mavx2)
 endif()
 
 find_package(ament_cmake_auto REQUIRED)
+find_package(OpenCV COMPONENTS core highgui imgproc videoio imgcodecs calib3d objdetect REQUIRED)
 
 ament_auto_find_build_dependencies()
 
@@ -25,6 +26,7 @@ target_architecture(ARCH)
 include_directories(
   include
 )
+include_directories(${OpenCV_INCLUDE_DIRS})
 
 function(add_dependencies_and_linkings arg)
   if("${ARCH}" STREQUAL x86_64)
@@ -54,6 +56,8 @@ ament_auto_add_library(mono_camera_node SHARED
   src/frame_observer.cpp
 )
 add_dependencies_and_linkings(mono_camera_node)
+target_link_libraries(mono_camera_node ${OpenCV_LIBS})
+
 
 ament_auto_add_library(trigger_node SHARED
   src/trigger_node.cpp
