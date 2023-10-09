@@ -66,6 +66,7 @@ private:
   std::string camera_info_url_;
   std::string frame_id_;
   bool use_measurement_time_;
+  bool start_imaging_;
   int32_t ptp_offset_;
 
   image_transport::CameraPublisher camera_info_pub_;
