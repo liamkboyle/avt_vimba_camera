@@ -2,7 +2,7 @@
   ros__parameters:
     # feature/AcquisitionFrameCount: 1
     feature/AcquisitionMode: Continuous
-    # feature/AcquisitionFrameRateAbs: 30
+    # feature/AcquisitionFrameRate: 30
     # feature/BalanceWhiteAuto: Continuous
     feature/ExposureAuto: 'Off'
     # feature/ExposureAutoMin: 100.0
