@@ -10,7 +10,7 @@
     # feature/ExposureTime: 5000.0
     # feature/GainAuto: Continuous
     feature/PixelFormat: BayerRG12p
-    feature/DeviceTemperatureSelector: Mainboard
+    # feature/DeviceTemperatureSelector: Mainboard
     # feature/TriggerActivation: RisingEdge
     # feature/TriggerMode: 'Off'
     # feature/TriggerSelector: AcquisitionStart
@@ -28,3 +28,7 @@
     feature/TriggerDelay: 0.0
     feature/TimerDelay: 0.0
     feature/TimerDuration: 0.0
+    feature/GainAutoMin: 0.0
+    feature/GainAutoMax: 48.0
+    feature/ExposureAutoMin: 100.0
+    feature/ExposureAutoMax: 200000.0
