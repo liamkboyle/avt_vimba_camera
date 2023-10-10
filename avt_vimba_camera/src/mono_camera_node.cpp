@@ -44,6 +44,8 @@
 #include <sensor_msgs/image_encodings.hpp>
 
 #include <immintrin.h>
+#include <tiffio.h>
+#include <string>
 
 using namespace std::placeholders;
 
@@ -54,6 +56,8 @@ MonoCameraNode::MonoCameraNode() : Node("camera"), api_(this->get_logger()), cam
   // Set the image publisher before streaming
   camera_info_pub_ = image_transport::create_camera_publisher(this, "~/image", rmw_qos_profile_system_default);
 
+
+  std::cout << cv::getBuildInformation() << std::endl;
   // Set the frame callback
   cam_.setCallback(std::bind(&avt_vimba_camera::MonoCameraNode::frameCallback, this, _1));
 
@@ -80,9 +84,10 @@ void MonoCameraNode::loadParams()
   frame_id_ = this->declare_parameter("frame_id", "");
   use_measurement_time_ = this->declare_parameter("use_measurement_time", false);
   ptp_offset_ = this->declare_parameter("ptp_offset", 0);
-  start_imaging_ = this->declare_parameter("start_imaging", true);
+  start_imaging_ = this->declare_parameter("start_imaging", false);
+  camera_name_ = this->declare_parameter("name", "mono_camera");
 
-
+  this->declare_parameter("write_data", false);
 
   RCLCPP_INFO(this->get_logger(), "Parameters loaded");
 }
@@ -96,8 +101,13 @@ void MonoCameraNode::start()
   cam_.start(ip_, guid_, frame_id_, camera_info_url_);
 
   // Start imaging on camera Node start
-  if(start_imaging_)
-    cam_.startImaging();
+  cam_.startImaging();
+  
+  // Pause to allow the camera to start
+  if(!start_imaging_){
+    cam_.stopImaging();
+    cam_.setForceStop(true);
+  }
 }
 
 
@@ -154,10 +164,60 @@ bool simd_unpack12to16(uint16_t *out_ptr, uint8_t *in_ptr, size_t n){
 }
 
 
+void WriteImage(cv::Mat& image, const char* filename)
+{
+	TIFF* tiff_img = TIFFOpen(filename, "w");
+	if (!tiff_img)
+		throw "Opening image by TIFFOpen";
+
+	// set tiff tags
+	int width = image.cols;
+	int height = image.rows; 
+
+
+	int bits_per_sample = 8;
+  if(image.type() == CV_16U || image.type() == CV_16UC1 || image.type () == CV_16UC3){
+      bits_per_sample = 16;
+  }
+
+  int line_len = 0;
+	line_len = width * (bits_per_sample / 8);
+	// printf("Saving image %dx%d to file:%s\n", width, height, filename);
+
+	TIFFSetField(tiff_img, TIFFTAG_IMAGEWIDTH, width);
+	TIFFSetField(tiff_img, TIFFTAG_IMAGELENGTH, height);
+	TIFFSetField(tiff_img, TIFFTAG_ROWSPERSTRIP, height);
+	
+  TIFFSetField(tiff_img, TIFFTAG_BITSPERSAMPLE, bits_per_sample);
+	TIFFSetField(tiff_img, TIFFTAG_MINSAMPLEVALUE, 0);
+	TIFFSetField(tiff_img, TIFFTAG_MAXSAMPLEVALUE, (1 << bits_per_sample) - 1);
+
+	TIFFSetField(tiff_img, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
+	TIFFSetField(tiff_img, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+
+	if (image.type() == CV_16UC3 || image.type() == CV_8UC3){
+      TIFFSetField(tiff_img, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+	    TIFFSetField(tiff_img, TIFFTAG_SAMPLESPERPIXEL, 3);
+  } else {
+      TIFFSetField(tiff_img, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
+	    TIFFSetField(tiff_img, TIFFTAG_SAMPLESPERPIXEL, 1);
+  }
+	//TIFFSetField(tiff_img, TIFFTAG_COMPRESSION, COMPRESSION_LZW);
+	//TIFFSetField(tiff_img, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_INT);
+
+	// save data
+	if (TIFFWriteEncodedStrip(tiff_img, 0, image.data, line_len*height) == -1)
+	{
+		throw("ImageFailed to write image");
+	}
+
+	TIFFWriteDirectory(tiff_img);
+	TIFFClose(tiff_img);
+}
 
 
 
-bool scale_and_save_frame(const FramePtr vimba_frame_ptr, sensor_msgs::msg::Image& image)
+bool get_raw_and_thumbnail(const FramePtr vimba_frame_ptr, cv::Mat &raw_img, sensor_msgs::msg::Image& image)
 {
     VmbPixelFormatType pixel_format;
     VmbUint32_t width, height, nSize;
@@ -176,7 +236,7 @@ bool scale_and_save_frame(const FramePtr vimba_frame_ptr, sensor_msgs::msg::Imag
 
 
     // std::cout << width << "x" << height << " ts:" << ts << " pxl_fmt:" << pixel_format << " n_size:" << nSize << std::endl;
-    cv::Mat orig_image;
+    cv::Mat raw_8bit;
     cv::Mat resized_down;
     cv_bridge::CvImage cv_img;
 
@@ -185,7 +245,8 @@ bool scale_and_save_frame(const FramePtr vimba_frame_ptr, sensor_msgs::msg::Imag
 
 
       case VmbPixelFormatRgb8: 
-        orig_image = cv::Mat(height, width, CV_8UC3, buffer_ptr);
+        raw_img = cv::Mat(height, width, CV_8UC3, buffer_ptr);
+        raw_8bit = raw_img;
         // cv::cvtColor(orig_image, orig_image, cv::COLOR_RGB2GRAY);
         // cv_img.encoding = "mono8";
         cv_img.encoding = "rgb8";
@@ -194,7 +255,7 @@ bool scale_and_save_frame(const FramePtr vimba_frame_ptr, sensor_msgs::msg::Imag
 
       case VmbPixelFormatBayerRG12p:
         {
-          cv::Mat raw_img(height, width, CV_16UC1);
+          raw_img = cv::Mat(height, width, CV_16UC1);
 
           uint16_t *img_ptr = raw_img.ptr<uint16_t>();
 
@@ -210,19 +271,19 @@ bool scale_and_save_frame(const FramePtr vimba_frame_ptr, sensor_msgs::msg::Imag
           // }
 
 
+
           //cv::cvtColor(raw_img, raw_img, cv::COLOR_BayerRG2BGR);
-          raw_img.convertTo(orig_image, CV_8U, 255.0 / 65535);
+          raw_img.convertTo(raw_8bit, CV_8U, 255.0 / 65535);
         }
 
-
-        
 
         cv_img.encoding = "mono8";
         break;
 
 
       default:
-        orig_image = cv::Mat(height, width, CV_8UC3, buffer_ptr);
+        raw_img = cv::Mat(height, width, CV_8UC3, buffer_ptr);
+        raw_8bit - raw_img;
         cv_img.encoding = "rgb8";
         break;
     }
@@ -230,8 +291,8 @@ bool scale_and_save_frame(const FramePtr vimba_frame_ptr, sensor_msgs::msg::Imag
 
     
 
-    cv::Size newSize(orig_image.cols / 8, orig_image.rows / 8);
-    cv::resize(orig_image, resized_down, newSize, cv::INTER_LINEAR);
+    cv::Size newSize(raw_8bit.cols / 8, raw_8bit.rows / 8);
+    cv::resize(raw_8bit, resized_down, newSize, cv::INTER_LINEAR);
 
 
     // cv::imshow("resiresize_down);
@@ -242,14 +303,8 @@ bool scale_and_save_frame(const FramePtr vimba_frame_ptr, sensor_msgs::msg::Imag
 
     cv_img.toImageMsg(image);
 
-  return true;
+    return true;
 }
-
-
-
-
-
-
 
 
 
@@ -257,16 +312,31 @@ bool scale_and_save_frame(const FramePtr vimba_frame_ptr, sensor_msgs::msg::Imag
 void MonoCameraNode::frameCallback(const FramePtr& vimba_frame_ptr)
 {
   rclcpp::Time ros_time = this->get_clock()->now();
+  VmbUint64_t ts;
+  VmbUint64_t frame_id;
+  vimba_frame_ptr->GetTimestamp(ts);
+  vimba_frame_ptr->GetFrameID(frame_id);
+
+  // std::cout << "[" << camera_name_ << "] Frame ID: " << frame_id << std::endl;
 
   // getNumSubscribers() is not yet supported in Foxy, will be supported in later versions
   // if (camera_info_pub_.getNumSubscribers() > 0)
   {
     sensor_msgs::msg::Image img;
+    cv::Mat raw_img;
 
 
-    if(scale_and_save_frame(vimba_frame_ptr, img))
-    // if (api_.frameToImage(vimba_frame_ptr, img))
+
+    if(get_raw_and_thumbnail(vimba_frame_ptr, raw_img, img))
     {
+
+
+      if(this->get_parameter("write_data").as_bool()){
+        std::string filename = "/data/raw_" + camera_name_ + "_" + std::to_string(frame_id) + "_" + std::to_string(ts) + ".tiff";
+        WriteImage(raw_img, filename.c_str());
+      }
+
+
       sensor_msgs::msg::CameraInfo ci = cam_.getCameraInfo();
       // Note: getCameraInfo() doesn't fill in header frame_id or stamp
       ci.header.frame_id = frame_id_;

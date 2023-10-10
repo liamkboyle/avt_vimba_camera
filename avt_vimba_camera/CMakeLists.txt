@@ -12,6 +12,9 @@ endif()
 find_package(ament_cmake_auto REQUIRED)
 find_package(OpenCV COMPONENTS core highgui imgproc videoio imgcodecs calib3d objdetect REQUIRED)
 
+link_libraries(tiff)
+
+
 ament_auto_find_build_dependencies()
 
 # Get architecture
