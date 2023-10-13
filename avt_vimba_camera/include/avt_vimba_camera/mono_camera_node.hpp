@@ -47,6 +47,7 @@
 #include <avt_vimba_camera_msgs/srv/load_settings.hpp>
 #include <avt_vimba_camera_msgs/srv/save_settings.hpp>
 
+#include <mutex>
 
 namespace avt_vimba_camera
 {
@@ -68,6 +69,9 @@ private:
   std::string camera_name_;
   bool use_measurement_time_;
   bool start_imaging_;
+
+  std::mutex write_tiffs_mutex_;
+  bool write_tiffs_;
   int32_t ptp_offset_;
 
   image_transport::CameraPublisher camera_info_pub_;
@@ -75,6 +79,9 @@ private:
   
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr start_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr stop_srv_;
+  
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr start_writing_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr stop_writing_;
 
   rclcpp::Service<avt_vimba_camera_msgs::srv::LoadSettings>::SharedPtr load_srv_;
   rclcpp::Service<avt_vimba_camera_msgs::srv::SaveSettings>::SharedPtr save_srv_;
@@ -94,6 +101,13 @@ private:
   void saveSrvCallback(const std::shared_ptr<rmw_request_id_t> request_header,
                        const avt_vimba_camera_msgs::srv::SaveSettings::Request::SharedPtr req,
                        avt_vimba_camera_msgs::srv::SaveSettings::Response::SharedPtr res);
+
+  void start_writing_tiffs(const std::shared_ptr<rmw_request_id_t> request_header,
+                        const std_srvs::srv::Trigger::Request::SharedPtr req,
+                        std_srvs::srv::Trigger::Response::SharedPtr res);
+  void stop_writing_tiffs(const std::shared_ptr<rmw_request_id_t> request_header,
+                       const std_srvs::srv::Trigger::Request::SharedPtr req,
+                       std_srvs::srv::Trigger::Response::SharedPtr res);
 };
 }  // namespace avt_vimba_camera
 #endif

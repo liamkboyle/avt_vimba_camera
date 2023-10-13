@@ -58,14 +58,20 @@ MonoCameraNode::MonoCameraNode() : Node("camera"), api_(this->get_logger()), cam
 
 
   std::cout << cv::getBuildInformation() << std::endl;
+  write_tiffs_ = false;
   // Set the frame callback
   cam_.setCallback(std::bind(&avt_vimba_camera::MonoCameraNode::frameCallback, this, _1));
 
   start_srv_ = create_service<std_srvs::srv::Trigger>("~/start_stream", std::bind(&MonoCameraNode::startSrvCallback, this, _1, _2, _3));
   stop_srv_ = create_service<std_srvs::srv::Trigger>("~/stop_stream", std::bind(&MonoCameraNode::stopSrvCallback, this, _1, _2, _3));
 
-  load_srv_ = create_service<avt_vimba_camera_msgs::srv::LoadSettings>("~/load_settings", std::bind(&MonoCameraNode::loadSrvCallback, this, _1, _2, _3));
-  save_srv_ = create_service<avt_vimba_camera_msgs::srv::SaveSettings>("~/save_settings", std::bind(&MonoCameraNode::saveSrvCallback, this, _1, _2, _3));
+  start_writing_ = create_service<std_srvs::srv::Trigger>("~/start_writing_tiffs", std::bind(&MonoCameraNode::start_writing_tiffs, this, _1, _2, _3));
+  stop_writing_ = create_service<std_srvs::srv::Trigger>("~/stop_writing_tiffs", std::bind(&MonoCameraNode::stop_writing_tiffs, this, _1, _2, _3));
+
+
+
+  // load_srv_ = create_service<avt_vimba_camera_msgs::srv::LoadSettings>("~/load_settings", std::bind(&MonoCameraNode::loadSrvCallback, this, _1, _2, _3));
+  // save_srv_ = create_service<avt_vimba_camera_msgs::srv::SaveSettings>("~/save_settings", std::bind(&MonoCameraNode::saveSrvCallback, this, _1, _2, _3));
 
   loadParams();
 }
@@ -87,8 +93,6 @@ void MonoCameraNode::loadParams()
   start_imaging_ = this->declare_parameter("start_imaging", false);
   camera_name_ = this->declare_parameter("name", "mono_camera");
 
-  this->declare_parameter("write_data", false);
-
   RCLCPP_INFO(this->get_logger(), "Parameters loaded");
 }
 
@@ -103,11 +107,11 @@ void MonoCameraNode::start()
   // Start imaging on camera Node start
   cam_.startImaging();
   
-  // Pause to allow the camera to start
-  if(!start_imaging_){
-    cam_.stopImaging();
-    cam_.setForceStop(true);
-  }
+  // // Pause to allow the camera to start
+  // if(!start_imaging_){
+  //   cam_.stopImaging();
+  //   cam_.setForceStop(true);
+  // }
 }
 
 
@@ -261,23 +265,10 @@ bool get_raw_and_thumbnail(const FramePtr vimba_frame_ptr, cv::Mat &raw_img, sen
 
           simd_unpack12to16(img_ptr, buffer_ptr, nSize);
 
-
-          // for(uint64_t i = 0; i < nSize; i += 3){
-          //   uint16_t px1 = buffer_ptr[i] | ((buffer_ptr[i+1] & 0x0F) << 8);
-          //   uint16_t px2 = ((buffer_ptr[i+1] & 0xF) >> 4) | ((buffer_ptr[i+2]) << 4);
-
-          //   *img_ptr++ = px1 << 4;
-          //   *img_ptr++ = px2 << 4;
-          // }
-
-
-
-          //cv::cvtColor(raw_img, raw_img, cv::COLOR_BayerRG2BGR);
           raw_img.convertTo(raw_8bit, CV_8U, 255.0 / 65535);
+          cv::cvtColor(raw_8bit, raw_8bit, cv::COLOR_BayerRG2BGR);
         }
-
-
-        cv_img.encoding = "mono8";
+        cv_img.encoding = "rgb8";
         break;
 
 
@@ -293,8 +284,6 @@ bool get_raw_and_thumbnail(const FramePtr vimba_frame_ptr, cv::Mat &raw_img, sen
 
     cv::Size newSize(raw_8bit.cols / 8, raw_8bit.rows / 8);
     cv::resize(raw_8bit, resized_down, newSize, cv::INTER_LINEAR);
-
-
     // cv::imshow("resiresize_down);
 
     // std::cout << cvImage << std::endl;
@@ -331,11 +320,14 @@ void MonoCameraNode::frameCallback(const FramePtr& vimba_frame_ptr)
     {
 
 
-      if(this->get_parameter("write_data").as_bool()){
-        std::string filename = "/data/raw_" + camera_name_ + "_" + std::to_string(frame_id) + "_" + std::to_string(ts) + ".tiff";
-        WriteImage(raw_img, filename.c_str());
-      }
+      {
+        std::unique_lock<std::mutex> lock(write_tiffs_mutex_);
 
+        if(write_tiffs_){
+          std::string filename = "/data/raw_" + camera_name_ + "_" + std::to_string(frame_id) + "_" + std::to_string(ts) + ".tiff";
+          WriteImage(raw_img, filename.c_str());
+        }
+      }
 
       sensor_msgs::msg::CameraInfo ci = cam_.getCameraInfo();
       // Note: getCameraInfo() doesn't fill in header frame_id or stamp
@@ -352,6 +344,7 @@ void MonoCameraNode::frameCallback(const FramePtr& vimba_frame_ptr)
       }
       img.header.frame_id = ci.header.frame_id;
       img.header.stamp = ci.header.stamp;
+      
       camera_info_pub_.publish(img, ci);
     }
     else
@@ -360,6 +353,29 @@ void MonoCameraNode::frameCallback(const FramePtr& vimba_frame_ptr)
     }
   }
 }
+
+void MonoCameraNode::start_writing_tiffs(const std::shared_ptr<rmw_request_id_t> request_header,
+                                      const std_srvs::srv::Trigger::Request::SharedPtr req,
+                                      std_srvs::srv::Trigger::Response::SharedPtr res) {
+  (void)request_header;
+  (void)req;
+  std::unique_lock<std::mutex> lock(write_tiffs_mutex_);
+  
+  write_tiffs_ = true;
+  res->success = true;
+}
+
+void MonoCameraNode::stop_writing_tiffs(const std::shared_ptr<rmw_request_id_t> request_header,
+                                      const std_srvs::srv::Trigger::Request::SharedPtr req,
+                                      std_srvs::srv::Trigger::Response::SharedPtr res) {
+  (void)request_header;
+  (void)req;
+  std::unique_lock<std::mutex> lock(write_tiffs_mutex_);
+
+  write_tiffs_ = false;
+  res->success = true;
+}
+
 
 void MonoCameraNode::startSrvCallback(const std::shared_ptr<rmw_request_id_t> request_header,
                                       const std_srvs::srv::Trigger::Request::SharedPtr req,
