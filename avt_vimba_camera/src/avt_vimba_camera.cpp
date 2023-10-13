@@ -576,7 +576,7 @@ bool AvtVimbaCamera::getFeatureValue(const std::string& feature_str, std::string
 template <typename Vimba_Type, typename Std_Type>
 void AvtVimbaCamera::configureFeature(const std::string& feature_str, const Vimba_Type& val_in, Std_Type& val_out)
 {
-  Vimba_Type actual_value;
+  Vimba_Type actual_value = 0;
 
   VmbErrorType return_value = setFeatureValue(feature_str, val_in);
   if (return_value == VmbErrorSuccess || return_value == VmbErrorInvalidValue)
@@ -596,7 +596,7 @@ void AvtVimbaCamera::configureFeature(const std::string& feature_str, const Vimb
   }
   else
   {
-    RCLCPP_ERROR_STREAM(nh_->get_logger(), " - Failed to set " << feature_str << " to " << actual_value);
+    RCLCPP_ERROR_STREAM(nh_->get_logger(), " - Failed to set " << feature_str << " to " << val_in);
     val_out = static_cast<Std_Type>(val_in);
   }
 }
